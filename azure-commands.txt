@@ -1,0 +1,204 @@
+#Logearnos en Azure
+az login
+
+#Ver subscripciones
+az account list --output table
+
+#Seleccionar la subscripcion
+az account set --subscription "Bilbao"
+
+#Crear un grupo de recursos
+az group create --name OpenSourceTalkGroup --location westeurope
+
+#Listar imagenes disponibles
+az vm image list --output table #--all
+
+#Crear una VM
+az vm create \
+--resource-group OpenSourceTalkGroup \
+--name NginxBaseVM \
+--image UbuntuLTS \
+--admin-username toor \
+--generate-ssh-keys
+
+#Coger la IP de la salida del comando de creación
+
+#SSH a la maquina
+ssh toor@51.137.100.238
+
+#Instalar Stress
+sudo apt-get -y install stress
+
+#Instalar Nginx
+sudo apt-get install -y nginx
+
+#Instalar dotnet core
+curl https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg
+sudo mv microsoft.gpg /etc/apt/trusted.gpg.d/microsoft.gpg
+sudo sh -c 'echo "deb [arch=amd64] https://packages.microsoft.com/repos/microsoft-ubuntu-xenial-prod xenial main" > /etc/apt/sources.list.d/dotnetdev.list'
+
+sudo apt-get install -y apt-transport-https
+sudo apt-get update
+sudo apt-get install dotnet-sdk-2.1.104
+
+#Instalar la aplicación
+
+##Opciones para actualizar la aplicación
+git clone https://github.com/rodrigocorral/hostname.git
+#Instalar el agente de build de VSTS
+https://docs.microsoft.com/en-us/vsts/build-release/actions/agents/v2-linux?view=vsts
+#Crear un Custom Script Extension
+https://docs.microsoft.com/en-us/azure/virtual-machine-scale-sets/tutorial-install-apps-cli
+
+#Desaprovisionar la máquina
+sudo waagent -deprovision+user -force
+
+#Cerrar la sesión SSH
+exit
+
+#Generalizar la máquina
+az vm deallocate --resource-group OpenSourceTalkGroup --name NginxBaseVM
+az vm generalize --resource-group OpenSourceTalkGroup --name NginxBaseVM
+
+#Crear una imagen
+az image create \
+  --resource-group OpenSourceTalkGroup \
+  --name NginxBaseVMImage \
+  --source NginxBaseVM
+
+#Crear el virtual machine scale set con imagen
+az vmss create \
+  --resource-group OpenSourceTalkGroup \
+  --name NginxVMSS \
+  --image NginxBaseVMImage \
+  --upgrade-policy-mode manual \
+  --instance-count 2 \
+  --admin-username toor \
+  --generate-ssh-keys \
+  --custom-data /home/rcorral/Desktop/cloud-init.yaml
+
+#Crear el virtual machine scale set con inicialización
+az vmss create \
+  --resource-group OpenSourceTalkGroup \
+  --name NginxVMSS \
+  --image UbuntuLTS \
+  --upgrade-policy-mode manual \
+  --instance-count 2 \
+  --admin-username toor \
+  --generate-ssh-keys \
+  --custom-data /home/rcorral/Desktop/cloud-init.yaml
+
+#Configurar una prueba del load balancer
+az network lb probe create \
+    --resource-group OpenSourceTalkGroup \
+    --lb-name NginxVMSSLB \
+    --name HealthProbe \
+    --protocol http \
+    --port 80 \
+    --path / \
+    --interval 15 \
+    --threshold 2
+
+#Crear un regla en el load balancer
+az network lb rule create \
+  --resource-group OpenSourceTalkGroup \
+  --name NginxVMSSLBRuleWeb \
+  --lb-name NginxVMSSLB \
+  --backend-pool-name NginxVMSSLBBEPool \
+  --backend-port 80 \
+  --frontend-port 80 \
+  --protocol tcp \
+  --probe-name HealthProbe
+
+#Obtener la IP de Load Balancer
+az network public-ip show \
+  --resource-group OpenSourceTalkGroup \
+  --name NginxVMSSLBPublicIP \
+  --query [ipAddress] \
+  --output table
+
+#Reiniciar el resource group
+az vmss restart \
+  --resource-group OpenSourceTalkGroup \
+  --name NginxVMSS
+
+#Obtener las IPs de las máquinas
+az vmss list-instance-connection-info \
+    --resource-group OpenSourceTalkGroup \
+    --name NginxVMSS
+
+#Configurar el autoescalado
+az monitor autoscale-settings create \
+    --resource-group OpenSourceTalkGroup \
+    --name autoscale \
+    --parameters '{"autoscale_setting_resource_name": "autoscale",
+      "enabled": true,
+      "location": "westeurope",
+      "notifications": [],
+      "profiles": [
+        {
+          "name": "autoscale by percentage based on CPU usage",
+          "capacity": {
+            "minimum": "2",
+            "maximum": "10",
+            "default": "2"
+          },
+          "rules": [
+            {
+              "metricTrigger": {
+                "metricName": "Percentage CPU",
+                "metricNamespace": "",
+                "metricResourceUri": "/subscriptions/cc59d0e1-2a7c-47ee-858b-b8b348daad09/resourceGroups/OpenSourceTalkGroup/providers/Microsoft.Compute/virtualMachineScaleSets/NginxVMSS",
+                "metricResourceLocation": "westeurope",
+                "timeGrain": "PT1M",
+                "statistic": "Average",
+                "timeWindow": "PT5M",
+                "timeAggregation": "Average",
+                "operator": "GreaterThan",
+                "threshold": 70
+              },
+              "scaleAction": {
+                "direction": "Increase",
+                "type": "ChangeCount",
+                "value": "3",
+                "cooldown": "PT5M"
+              }
+            },
+            {
+              "metricTrigger": {
+                "metricName": "Percentage CPU",
+                "metricNamespace": "",
+                "metricResourceUri": "/subscriptions/cc59d0e1-2a7c-47ee-858b-b8b348daad09/resourceGroups/OpenSourceTalkGroup/providers/Microsoft.Compute/virtualMachineScaleSets/NginxVMSS",
+                "metricResourceLocation": "westeurope",
+                "timeGrain": "PT1M",
+                "statistic": "Average",
+                "timeWindow": "PT5M",
+                "timeAggregation": "Average",
+                "operator": "LessThan",
+                "threshold": 30
+              },
+              "scaleAction": {
+                "direction": "Decrease",
+                "type": "ChangeCount",
+                "value": "1",
+                "cooldown": "PT5M"
+              }
+            }
+          ]
+        }
+      ],
+      "tags": {},
+      "target_resource_uri": "/subscriptions/cc59d0e1-2a7c-47ee-858b-b8b348daad09/resourceGroups/OpenSourceTalkGroup/providers/Microsoft.Compute/virtualMachineScaleSets/NginxVMSS"
+    }'
+
+#Estresar las máquinas
+sudo stress --cpu 10 --timeout 420 &
+
+#Monitorizamos el número de instancias
+watch az vmss list-instances \
+  --resource-group OpenSourceTalkGroup \
+  --name NginxVMSS \
+  --output table
+
+#Eliminar resource gorup
+az group delete --name OpenSourceTalkGroup
