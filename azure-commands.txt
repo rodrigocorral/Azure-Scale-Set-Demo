@@ -200,5 +200,5 @@ watch az vmss list-instances \
   --name NginxVMSS \
   --output table
 
-#Eliminar resource gorup
+#Eliminar resource group
 az group delete --name OpenSourceTalkGroup
