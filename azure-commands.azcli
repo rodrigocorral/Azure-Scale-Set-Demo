@@ -74,8 +74,7 @@ az vmss create \
   --upgrade-policy-mode manual \
   --instance-count 2 \
   --admin-username toor \
-  --generate-ssh-keys \
-  --custom-data /home/rcorral/Desktop/cloud-init.yaml
+  --generate-ssh-keys
 
 #Crear el virtual machine scale set con inicialización
 az vmss create \
@@ -86,7 +85,7 @@ az vmss create \
   --instance-count 2 \
   --admin-username toor \
   --generate-ssh-keys \
-  --custom-data /home/rcorral/Desktop/cloud-init.yaml
+  --custom-data /home/rcorral/repos/Azure-Scale-Set-Demo/cloud-init.yaml
 
 #Configurar una prueba del load balancer
 az network lb probe create \
